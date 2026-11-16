@@ -329,7 +329,7 @@ function makeDemo() {
       const host = hostOf(url);
       if (host.includes('blocked')) return { ok: false, reason: 'blocked' };      // lets you see the "shop blocks us" message
       if (host.includes('nofunction')) return { ok: false, reason: 'function' };  // ...and the "not switched on" one
-      return { ok: true, url, title: 'Demo product from ' + host, image: null, site_name: host, favicon: null };
+      return { ok: true, url, title: 'Demo product from ' + host, image: null, price: '49.9', currency: 'EUR', site_name: host, favicon: null };
     },
  
     async deleteAccount() {
