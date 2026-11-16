@@ -1,21 +1,20 @@
-
 // Two interchangeable backends with the same methods:
 //   * supabase: the real thing (shared between phones)
 //   * demo:     everything in this browser, with made-up family members, for trying the app
 // The UI only ever talks to the methods below.
- 
+
 import { blobToDataUrl, hostOf } from './util.js';
- 
+
 const SUPABASE_JS = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js';
- 
+
 export async function createBackend(cfg) {
   if (cfg && cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY) return makeSupabase(cfg);
   return makeDemo();
 }
- 
+
 const cleanCode = (c) => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const nz = (s) => { const v = typeof s === 'string' ? s.trim() : s; return v === '' || v == null ? null : v; };
- 
+
 function itemPayload(it) {
   return {
     type: it.type || 'product',
@@ -27,7 +26,7 @@ function itemPayload(it) {
     notes: nz(it.notes),
   };
 }
- 
+
 // =====================================================================
 // Supabase
 // =====================================================================
@@ -40,14 +39,14 @@ function loadScript(src) {
     document.head.append(s);
   });
 }
- 
+
 async function makeSupabase(cfg) {
   await loadScript(cfg.SUPABASE_JS || SUPABASE_JS);
   const sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, {
     auth: { persistSession: true, autoRefreshToken: true, storageKey: 'wishlist-auth' },
   });
   let uid = null;
- 
+
   const fail = (error) => {
     const m = String(error?.message || error || '');
     if (/failed to fetch|networkerror|load failed/i.test(m)) throw new Error("Can't reach the server. Check your internet connection.");
@@ -55,7 +54,7 @@ async function makeSupabase(cfg) {
     throw new Error(m || 'Something went wrong.');
   };
   const ok = ({ data, error }) => { if (error) fail(error); return data; };
- 
+
   const ensureSession = async () => {
     const { data } = await sb.auth.getSession();
     if (data.session) { uid = data.session.user.id; return; }
@@ -63,10 +62,10 @@ async function makeSupabase(cfg) {
     uid = res.user.id;
   };
   const mapItem = (r) => ({ ...r, details: r.details || [], groups: (r.item_publications || []).map((p) => p.group_id), item_publications: undefined });
- 
+
   return {
     demo: false,
- 
+
     async init() {
       const { data } = await sb.auth.getSession();
       if (!data.session) return { profile: null };
@@ -95,7 +94,7 @@ async function makeSupabase(cfg) {
     async updateMe(patch) {
       ok(await sb.from('profiles').update(patch).eq('id', uid));
     },
- 
+
     async listMyItems() {
       const rows = ok(await sb.from('items').select('*, item_publications(group_id)').eq('owner_id', uid).order('position').order('created_at'));
       return rows.map(mapItem);
@@ -120,7 +119,7 @@ async function makeSupabase(cfg) {
       if (del.length) ok(await sb.from('item_publications').delete().eq('item_id', itemId).in('group_id', del));
     },
     async publishAll(groupId, on) { ok(await sb.rpc('publish_all', { p_group: groupId, p_on: on })); },
- 
+
     async listGroups() {
       const rows = ok(await sb.from('groups').select('*, group_members(user_id, joined_at, profiles(id,name,avatar))').order('created_at'));
       return rows.map((g) => ({
@@ -136,12 +135,24 @@ async function makeSupabase(cfg) {
     async removeMember(gid, userId) { ok(await sb.from('group_members').delete().eq('group_id', gid).eq('user_id', userId)); },
     async regenInvite(gid) { return ok(await sb.rpc('regenerate_invite', { p_group: gid })); },
     async updateGroup(gid, patch) { ok(await sb.from('groups').update(patch).eq('id', gid)); },
- 
+
     async groupCounts(gid) {
       const rows = ok(await sb.from('item_publications').select('item_id, items!inner(owner_id)').eq('group_id', gid));
       const out = {};
       rows.forEach((r) => { const o = r.items.owner_id; out[o] = (out[o] || 0) + 1; });
       return out;
+    },
+    // every gift shared in a group, with who-is-buying info for gifts that are not mine
+    async groupItems(gid) {
+      const rows = ok(await sb.from('items').select('id,owner_id,type,title,image_url,price,priority,position, item_publications!inner(group_id)')
+        .eq('item_publications.group_id', gid).order('position').order('created_at'));
+      const theirs = rows.filter((r) => r.owner_id !== uid);
+      const status = theirs.length ? ok(await sb.rpc('item_claim_status', { p_item_ids: theirs.map((r) => r.id) })) : [];
+      const byId = Object.fromEntries(status.map((s) => [s.item_id, s]));
+      return rows.map((r) => {
+        const s = byId[r.id];
+        return { ...r, item_publications: undefined, claim: r.owner_id === uid ? null : { claimed: !!s?.claimed, mine: !!s?.mine, by: s?.claimed_by_name || null } };
+      });
     },
     async memberList(gid, userId) {
       const rows = ok(await sb.from('items').select('*, item_publications!inner(group_id)')
@@ -156,7 +167,7 @@ async function makeSupabase(cfg) {
     },
     async claim(id) { ok(await sb.rpc('claim_item', { p_item: id })); },
     async unclaim(id) { ok(await sb.rpc('unclaim_item', { p_item: id })); },
- 
+
     async uploadImage(blob) {
       const path = `${uid}/${crypto.randomUUID()}.jpg`;
       ok(await sb.storage.from('item-images').upload(path, blob, { contentType: 'image/jpeg', cacheControl: '31536000' }));
@@ -167,11 +178,11 @@ async function makeSupabase(cfg) {
       if (error) return { ok: false, reason: 'function' };   // function missing or not allowed
       return data || { ok: false, reason: 'unknown' };
     },
- 
+
     async deleteAccount() { ok(await sb.rpc('delete_my_account')); await sb.auth.signOut(); },
   };
 }
- 
+
 // =====================================================================
 // Demo (all in this browser)
 // =====================================================================
@@ -209,10 +220,10 @@ function makeDemo() {
   const person = (id) => db.profiles[id];
   const myGroups = () => db.groups.filter((g) => g.members.includes(me));
   const withGroups = (i) => ({ ...i, groups: db.pubs.filter((p) => p.item_id === i.id).map((p) => p.group_id) });
- 
+
   return {
     demo: true,
- 
+
     async init() { await sleep(); return { profile: db.me ? person(me) : null }; },
     async start(name, joinCode) {
       await sleep();
@@ -237,7 +248,7 @@ function makeDemo() {
     },
     async getRecoveryCode() { return db.recovery; },
     async updateMe(patch) { Object.assign(db.profiles[me], patch); save(); },
- 
+
     async listMyItems() { await sleep(60); return db.items.filter((i) => i.owner_id === me).sort((a, b) => a.position - b.position).map(withGroups); },
     async saveItem(it) {
       await sleep();
@@ -268,7 +279,7 @@ function makeDemo() {
       if (on) mine.forEach((id) => db.pubs.push({ item_id: id, group_id: gid }));
       save();
     },
- 
+
     async listGroups() {
       await sleep(60);
       return myGroups().map((g) => ({
@@ -296,11 +307,22 @@ function makeDemo() {
     async removeMember(gid, userId) { const g = db.groups.find((x) => x.id === gid); g.members = g.members.filter((m) => m !== userId); save(); },
     async regenInvite(gid) { const g = db.groups.find((x) => x.id === gid); g.invite_code = Math.random().toString(36).slice(2, 10).toUpperCase(); save(); return g.invite_code; },
     async updateGroup(gid, patch) { Object.assign(db.groups.find((x) => x.id === gid), patch); save(); },
- 
+
     async groupCounts(gid) {
       const out = {};
       db.pubs.filter((p) => p.group_id === gid).forEach((p) => { const o = db.items.find((i) => i.id === p.item_id)?.owner_id; if (o) out[o] = (out[o] || 0) + 1; });
       return out;
+    },
+    async groupItems(gid) {
+      await sleep(60);
+      const g = db.groups.find((x) => x.id === gid);
+      const ids = new Set(db.pubs.filter((p) => p.group_id === gid).map((p) => p.item_id));
+      return db.items.filter((i) => ids.has(i.id)).sort((a, b) => a.position - b.position).map((i) => {
+        if (i.owner_id === me) return { ...i, claim: null };
+        const c = db.claims.find((x) => x.item_id === i.id);
+        const mine = c?.claimed_by === me;
+        return { ...i, claim: { claimed: !!c, mine, by: c && (mine || g.show_claimers) ? person(c.claimed_by)?.name : null } };
+      });
     },
     async memberList(gid, userId) {
       await sleep(60);
@@ -322,7 +344,7 @@ function makeDemo() {
       db.claims.push({ item_id: id, claimed_by: me }); save();
     },
     async unclaim(id) { db.claims = db.claims.filter((c) => !(c.item_id === id && c.claimed_by === me)); save(); },
- 
+
     async uploadImage(blob) { return blobToDataUrl(blob); },
     async preview(url) {
       await sleep(500);
@@ -331,7 +353,7 @@ function makeDemo() {
       if (host.includes('nofunction')) return { ok: false, reason: 'function' };  // ...and the "not switched on" one
       return { ok: true, url, title: 'Demo product from ' + host, image: null, price: '49.9', currency: 'EUR', site_name: host, favicon: null };
     },
- 
+
     async deleteAccount() {
       db.items = db.items.filter((i) => i.owner_id !== me);
       db.pubs = db.pubs.filter((p) => db.items.find((i) => i.id === p.item_id));
@@ -340,4 +362,3 @@ function makeDemo() {
     },
   };
 }
- 
