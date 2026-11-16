@@ -24,7 +24,7 @@ function openDialog(build) {
   return new Promise((resolve) => {
     const d = h('dialog');
     const close = (v) => { try { d.close(); } catch { /* already closed */ } d.remove(); resolve(v); };
-    d.append(...[].concat(build(close)));
+    d.append(...[].concat(build(close)).filter(Boolean));
     d.addEventListener('cancel', () => { d.remove(); resolve(null); });
     document.body.append(d);
     d.showModal();
@@ -502,13 +502,17 @@ async function viewSettings() {
   const avatarChips = h('div', { class: 'chips' });
   const drawAvatars = () => avatarChips.replaceChildren(
     h('button', { class: 'chip', type: 'button', 'aria-pressed': String(!S.me.avatar), onClick: () => setAvatar(null) }, t('Initial')),
-    AVATARS.map((e) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(S.me.avatar === e), 'aria-label': e, onClick: () => setAvatar(e) }, e)));
-  const setAvatar = async (e) => { await S.be.updateMe({ avatar: e }); S.me.avatar = e; drawAvatars(); };
+    ...AVATARS.map((e) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(S.me.avatar === e), 'aria-label': e, onClick: () => setAvatar(e) }, e)));
+  let bigAvatar = avatar(S.me, 56);
+  const setAvatar = async (e) => {
+    await S.be.updateMe({ avatar: e }); S.me.avatar = e; drawAvatars();
+    const fresh = avatar(S.me, 56); bigAvatar.replaceWith(fresh); bigAvatar = fresh;
+  };
   drawAvatars();
 
   const body = h('div', { class: 'stack' },
     h('section', { class: 'panel stack' }, h('h2', null, t('Your profile')),
-      h('div', { style: { display: 'flex', alignItems: 'center', gap: '14px' } }, avatar(S.me, 56),
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: '14px' } }, bigAvatar,
         h('label', { class: 'field', style: { flex: 1 } }, h('span', null, t('Name')), name)),
       h('button', { class: 'btn small', type: 'button', style: { alignSelf: 'start' }, onClick: act(async () => {
         const v = name.value.trim(); if (!v) { toast(t('Your name cannot be empty.')); return; }
