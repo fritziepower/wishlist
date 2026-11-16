@@ -207,6 +207,8 @@ DICT.it = {
   "Experience": "Esperienza",
   "Other": "Altro",
   "Remove": "Rimuovi",
+  "The link reader isn't switched on yet (step 4 of the setup guide). I made a title from the link instead.": "Il lettore di link non è ancora attivo (passo 4 della guida). Ho creato un titolo dalle parole del link.",
+  "This shop doesn't let Wishlist read its page. I made a title from the link. Add a photo yourself.": "Questo negozio non permette a Wishlist di leggere la sua pagina. Ho creato un titolo dal link. Aggiungi tu una foto.",
   "Size": "Taglia",
   "Shoe size": "Numero di scarpe",
   "Colour": "Colore",
@@ -315,6 +317,20 @@ export function resizeImage(file, max = 1000, quality = 0.82) {
  
 export const blobToDataUrl = (blob) =>
   new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
+ 
+// A readable title made from the words in a product link, for shops that block page reading.
+export function titleFromUrl(url) {
+  try {
+    const parts = new URL(url).pathname.split('/').filter(Boolean);
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const seg = decodeURIComponent(parts[i]).replace(/\.(html?|php|aspx?)$/i, '');
+      if (!/[a-z]{3,}/i.test(seg) || (/\d/.test(seg) && !/[-_+ ]/.test(seg)) || /^(p|dp|product|products|prodotto|prodotti|item|it_it|en_us|en_gb)$/i.test(seg)) continue;
+      const words = seg.replace(/[-_+]+/g, ' ').replace(/\s+/g, ' ').trim();
+      if (words.length >= 4) return words.charAt(0).toUpperCase() + words.slice(1, 120);
+    }
+  } catch { /* not a valid link */ }
+  return '';
+}
  
 export function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
