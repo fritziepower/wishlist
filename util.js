@@ -28,6 +28,7 @@ export function h(tag, props, ...kids) {
 // Anything missing falls back to English. ONE holds the singular for texts with a count {n}.
 const DICT = {};
 const ONE = { en: {
+  "{n} still available": "1 still available",
   "{n} wishes": "1 wish",
   "{n} members": "1 member",
   "{n} wishes shared": "1 wish shared",
@@ -206,6 +207,26 @@ DICT.it = {
   "Experience": "Esperienza",
   "Other": "Altro",
   "Remove": "Rimuovi",
+  "Press and hold a wish, then drag it to reorder.": "Tieni premuto un desiderio e trascinalo per riordinare.",
+  "Group menu": "Menu del gruppo",
+  "People": "Persone",
+  "Gifts": "Regali",
+  "Gifts shared": "Regali condivisi",
+  "Gifts taken": "Regali presi",
+  "Still available": "Ancora disponibili",
+  "You're buying {n}": "Ne stai comprando {n}",
+  "All taken": "Tutti presi",
+  "{n} still available": "{n} ancora disponibili",
+  "I'm buying": "Li compro io",
+  "Everything": "Tutto",
+  "for {name}": "per {name}",
+  "Nothing to show": "Niente da mostrare",
+  "When others share their wishes, they appear here.": "Quando gli altri condividono i desideri, appaiono qui.",
+  "Try another filter.": "Prova un altro filtro.",
+  "Just you so far": "Per ora ci sei solo tu",
+  "Invite your family to see their wishes here.": "Invita la tua famiglia per vedere qui i loro desideri.",
+  "Done": "Fatto",
+  "Members": "Membri",
   "Which store?": "Da quale negozio?",
   "e.g. Amazon, Feltrinelli": "es. Amazon, Feltrinelli",
   "The link reader isn't switched on yet (step 4 of the setup guide). I made a title from the link instead.": "Il lettore di link non è ancora attivo (passo 4 della guida). Ho creato un titolo dalle parole del link.",
@@ -229,6 +250,7 @@ DICT.it = {
   "Could not load the app libraries. Check your internet connection and try again.": "Impossibile caricare l'app. Controlla la connessione a internet e riprova.",
 };
 ONE.it = {
+  "{n} still available": "1 ancora disponibile",
   "{n} wishes": "1 desiderio",
   "{n} members": "1 membro",
   "{n} wishes shared": "1 desiderio condiviso",
