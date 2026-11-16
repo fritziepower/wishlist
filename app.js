@@ -104,9 +104,10 @@ function Empty(emoji, title, text, action) {
 // ---------------------------------------------------------------------
 function cardImage(item) {
   const info = typeInfo(item.type);
-  const fallback = () => h('span', { class: 'big-emoji', 'aria-hidden': 'true' }, item.emoji || info.emoji);
+  const isProduct = item.type === 'product';
+  const fallback = () => h('span', { class: 'big-emoji', 'aria-hidden': 'true' }, (isProduct && item.emoji) || info.emoji);
   const box = h('div', { class: 't-' + item.type + ' tag-img' }, h('span', { class: 'eyelet' }));
-  if (item.image_url) {
+  if (isProduct && item.image_url) {
     const img = h('img', { src: item.image_url, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' });
     img.addEventListener('error', () => { img.replaceWith(fallback()); });
     box.append(img);
@@ -310,10 +311,12 @@ async function viewEditor(id) {
     try { r = await S.be.preview(clean); } catch { r = { ok: false, reason: 'function' }; }
     if (r && r.ok) {
       if (!f.title.trim() && r.title) f.title = r.title;
-      if (!f.image_url && r.image) f.image_url = r.image;
-      if (!f.price.trim() && r.price) f.price = (!r.currency || r.currency === 'EUR') ? r.price : `${r.currency} ${r.price}`;
+      if (f.type === 'product') {
+        if (!f.image_url && r.image) f.image_url = r.image;
+        if (!f.price.trim() && r.price) f.price = (!r.currency || r.currency === 'EUR') ? r.price : `${r.currency} ${r.price}`;
+      }
       if (r.favicon) f.favicon_url = r.favicon;
-      f.site_name = r.site_name || f.site_name || hostOf(u);
+      f.site_name = f.type === 'product' ? (r.site_name || f.site_name || hostOf(u)) : (f.site_name || r.site_name || hostOf(u));
       status = { ok: t('Filled in from the link. Check it and change anything you like.') };
     } else {
       // could not read the page: still fill in what the link itself tells us
@@ -341,7 +344,10 @@ async function viewEditor(id) {
     if (!f.title.trim()) { toast(t('Add a title first.')); return; }
     if (f.url.trim() && !/^https?:\/\//i.test(f.url.trim())) f.url = 'https://' + f.url.trim();
     f.url = cleanProductUrl(f.url);
-    const saved = await S.be.saveItem({ ...f, id: isNew ? undefined : id });
+    const item = { ...f, id: isNew ? undefined : id };
+    if (item.type !== 'product') { item.image_url = ''; item.emoji = ''; item.details = []; }   // these types use their own emoji
+    if (item.type === 'money') { item.url = ''; item.favicon_url = ''; item.site_name = ''; }   // no link for money
+    const saved = await S.be.saveItem(item);
     await S.be.setItemGroups(saved.id, f.groups);
     toast(isNew ? t('Wish added') : t('Changes saved'));
     go('#/');
@@ -353,6 +359,7 @@ async function viewEditor(id) {
 
   function build() {
     const info = typeInfo(f.type);
+    const isProduct = f.type === 'product';
     const out = [];
     out.push(h('div', { role: 'radiogroup', 'aria-label': t('Type') }, h('span', { class: 'label' }, t('What kind of wish is it?')),
       h('div', { class: 'chips' }, TYPES.map((ty) => h('button', { class: 'chip', type: 'button', role: 'radio', 'aria-checked': String(f.type === ty.id),
@@ -360,7 +367,7 @@ async function viewEditor(id) {
 
     const url = bind(h('input', { type: 'url', inputmode: 'url', value: f.url, placeholder: 'https://', autocapitalize: 'none', autocomplete: 'off' }), 'url');
     url.addEventListener('paste', () => setTimeout(() => { f.url = url.value; fetchLink(); }, 0));
-    out.push(h('div', null,
+    if (f.type !== 'money') out.push(h('div', null,
       h('label', { class: 'field' }, h('span', null, f.type === 'product' ? t('Link to the product') : t('Link (optional)')), url),
       h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', marginTop: '8px', flexWrap: 'wrap' } },
         h('button', { class: 'btn soft small', type: 'button', disabled: status?.busy, onClick: fetchLink }, icon('link', 16), status?.busy ? t('Reading the link…') : t('Fill in from link')),
@@ -369,9 +376,11 @@ async function viewEditor(id) {
       status?.err && h('p', { class: 'error', role: 'alert' }, t(status.err))));
 
     out.push(h('label', { class: 'field' }, h('span', null, t('Title')), bind(h('input', { type: 'text', value: f.title, maxlength: 200, required: true, placeholder: t('What would you love?') }), 'title')));
+    if (f.type === 'gift_card') out.push(h('label', { class: 'field' }, h('span', null, t('Which store?')),
+      bind(h('input', { type: 'text', value: f.site_name, maxlength: 100, placeholder: t('e.g. Amazon, Feltrinelli') }), 'site_name')));
 
     const fileInput = h('input', { type: 'file', accept: 'image/*', hidden: true, onChange: (e) => pickImage(e.target.files[0]) });
-    out.push(h('div', null, h('span', { class: 'label' }, t('Picture')),
+    if (isProduct) out.push(h('div', null, h('span', { class: 'label' }, t('Picture')),
       h('div', { class: 'img-edit' },
         h('div', { class: 'thumb' }, f.image_url ? h('img', { src: f.image_url, alt: '', referrerpolicy: 'no-referrer' }) : (f.emoji || info.emoji)),
         h('div', { class: 'btns' },
@@ -388,7 +397,7 @@ async function viewEditor(id) {
         h('div', { class: 'chips' }, [['nice', t('Nice to have')], ['really', t('Really want')]].map(([v, l]) =>
           h('button', { class: 'chip', type: 'button', 'aria-pressed': String(f.priority === v), onClick: () => { f.priority = v; draw(); } }, l))))));
 
-    out.push(h('div', null, h('span', { class: 'label' }, t('Order details')), h('p', { class: 'hint', style: { marginTop: '-2px', marginBottom: '8px' } }, t('Size, colour or anything the buyer needs to get it right.')),
+    if (isProduct) out.push(h('div', null, h('span', { class: 'label' }, t('Order details')), h('p', { class: 'hint', style: { marginTop: '-2px', marginBottom: '8px' } }, t('Size, colour or anything the buyer needs to get it right.')),
       f.details.map((d, i) => h('div', { class: 'detail-row' },
         bind2(h('input', { type: 'text', value: d.label, maxlength: 40, placeholder: t('Label'), 'aria-label': t('Label') }), d, 'label'),
         bind2(h('input', { type: 'text', value: d.value, maxlength: 80, placeholder: t('Value'), 'aria-label': t('Value') }), d, 'value'),
