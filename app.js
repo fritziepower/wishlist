@@ -310,6 +310,7 @@ async function viewEditor(id) {
     if (r && r.ok) {
       if (!f.title.trim() && r.title) f.title = r.title;
       if (!f.image_url && r.image) f.image_url = r.image;
+      if (!f.price.trim() && r.price) f.price = (!r.currency || r.currency === 'EUR') ? r.price : `${r.currency} ${r.price}`;
       if (r.favicon) f.favicon_url = r.favicon;
       f.site_name = r.site_name || f.site_name || hostOf(u);
       status = { ok: t('Filled in from the link. Check it and change anything you like.') };
