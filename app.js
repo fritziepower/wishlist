@@ -14,7 +14,7 @@ const isStandalone = navigator.standalone === true || matchMedia('(display-mode:
 let toastTimer;
 function toast(msg) {
   document.querySelector('.toast')?.remove();
-  const el = h('div', { class: 'toast', role: 'status' }, msg);
+  const el = h('div', { class: 'toast', role: 'status' }, t(msg));
   document.body.append(el);
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.remove(), 3200);
@@ -200,7 +200,7 @@ function viewWelcome() {
   const wrap = h('div', { class: 'welcome' });
   const draw = () => {
     const err = h('p', { class: 'error', role: 'alert', hidden: true });
-    const showErr = (m) => { err.textContent = m; err.hidden = false; };
+    const showErr = (m) => { err.textContent = t(m); err.hidden = false; };
     let form;
     if (mode === 'new') {
       const name = h('input', { type: 'text', maxlength: 40, autocomplete: 'given-name', required: true, placeholder: t('e.g. Giulia') });
@@ -352,7 +352,7 @@ async function viewEditor(id) {
       h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', marginTop: '8px', flexWrap: 'wrap' } },
         h('button', { class: 'btn soft small', type: 'button', disabled: status?.busy, onClick: fetchLink }, icon('link', 16), status?.busy ? t('Reading the link…') : t('Fill in from link')),
         status?.ok && h('span', { class: 'small' }, status.ok)),
-      status?.err && h('p', { class: 'error', role: 'alert' }, status.err)));
+      status?.err && h('p', { class: 'error', role: 'alert' }, t(status.err))));
 
     out.push(h('label', { class: 'field' }, h('span', null, t('Title')), bind(h('input', { type: 'text', value: f.title, maxlength: 200, required: true, placeholder: t('What would you love?') }), 'title')));
 
@@ -380,7 +380,7 @@ async function viewEditor(id) {
         bind2(h('input', { type: 'text', value: d.value, maxlength: 80, placeholder: t('Value'), 'aria-label': t('Value') }), d, 'value'),
         h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('Remove detail'), onClick: () => { f.details.splice(i, 1); draw(); } }, icon('x', 18)))),
       h('div', { class: 'chips' },
-        QUICK_DETAILS.filter((q) => !f.details.some((d) => d.label === q)).map((q) => h('button', { class: 'chip', type: 'button', onClick: () => { f.details.push({ label: q, value: '' }); draw(); } }, icon('plus', 14), t(q))),
+        QUICK_DETAILS.filter((q) => !f.details.some((d) => d.label === t(q))).map((q) => h('button', { class: 'chip', type: 'button', onClick: () => { f.details.push({ label: t(q), value: '' }); draw(); } }, icon('plus', 14), t(q))),
         h('button', { class: 'chip', type: 'button', onClick: () => { f.details.push({ label: '', value: '' }); draw(); } }, icon('plus', 14), t('Custom')))));
 
     out.push(h('label', { class: 'field' }, h('span', null, t('Notes')), bind(h('textarea', { maxlength: 2000, placeholder: t('Anything else the buyer should know') }, f.notes), 'notes')));
@@ -568,7 +568,7 @@ async function route(opts = {}) {
     window.scrollTo(0, quiet ? y : 0);
   } catch (e) {
     if (tok !== routeToken) return;
-    mount(shell({ title: t('Something went wrong'), tab, body: Empty('😕', t("That didn't work"), e.message || '', h('button', { class: 'btn', type: 'button', onClick: () => route() }, t('Try again'))) }));
+    mount(shell({ title: t('Something went wrong'), tab, body: Empty('😕', t("That didn't work"), t(e.message || ''), h('button', { class: 'btn', type: 'button', onClick: () => route() }, t('Try again'))) }));
   }
 }
 addEventListener('hashchange', () => { S.reorder = false; route(); });
@@ -582,7 +582,7 @@ async function boot() {
     S.be = await createBackend(window.WISHLIST_CONFIG || {});
     S.me = (await S.be.init()).profile;
   } catch (e) {
-    mount(h('div', { class: 'welcome' }, Empty('😕', t("Wishlist can't start"), e.message, h('button', { class: 'btn', type: 'button', onClick: () => location.reload() }, t('Try again')))));
+    mount(h('div', { class: 'welcome' }, Empty('😕', t("Wishlist can't start"), t(e.message), h('button', { class: 'btn', type: 'button', onClick: () => location.reload() }, t('Try again')))));
     return;
   }
   await route();
