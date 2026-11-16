@@ -1,6 +1,5 @@
-
 // Small helpers: DOM builder, translations, icons, image resizing.
- 
+
 // ---------- DOM builder: h('div', {class:'x', onClick: fn}, child, child...) ----------
 export function h(tag, props, ...kids) {
   const el = document.createElement(tag);
@@ -23,7 +22,7 @@ export function h(tag, props, ...kids) {
   if (deferredValue !== undefined) el.value = deferredValue;
   return el;
 }
- 
+
 // ---------- translations ----------
 // The English text IS the key. To add a language, add a dictionary to DICT (see Italian below).
 // Anything missing falls back to English. ONE holds the singular for texts with a count {n}.
@@ -33,7 +32,7 @@ const ONE = { en: {
   "{n} members": "1 member",
   "{n} wishes shared": "1 wish shared",
 } };
- 
+
 DICT.it = {
   "Cancel": "Annulla",
   "Copied": "Copiato",
@@ -232,7 +231,7 @@ ONE.it = {
   "{n} members": "1 membro",
   "{n} wishes shared": "1 desiderio condiviso",
 };
- 
+
 const lang = (navigator.language || 'en').slice(0, 2).toLowerCase();
 if (DICT[lang]) document.documentElement.lang = lang;
 export function t(text, vars) {
@@ -241,7 +240,7 @@ export function t(text, vars) {
   if (vars) for (const [k, v] of Object.entries(vars)) s = s.replaceAll(`{${k}}`, v);
   return s;
 }
- 
+
 // ---------- icons (24px stroke icons) ----------
 const PATHS = {
   gift: '<rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13M5 12v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8M7.5 8a2.5 2.5 0 1 1 0-5C10 3 12 8 12 8s2-5 4.5-5a2.5 2.5 0 1 1 0 5"/>',
@@ -271,7 +270,7 @@ export function icon(name, size = 22) {
   span.innerHTML = `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${PATHS[name] || ''}</svg>`;
   return span;
 }
- 
+
 // ---------- item types ----------
 export const TYPES = [
   { id: 'product', label: 'Product link', emoji: '🎁' },
@@ -281,7 +280,7 @@ export const TYPES = [
   { id: 'other', label: 'Other', emoji: '✨' },
 ];
 export const typeInfo = (id) => TYPES.find((x) => x.id === id) || TYPES[4];
- 
+
 // ---------- avatars ----------
 const AVATAR_COLORS = ['#FFB3C7', '#FFD98A', '#A8E6CF', '#B8C4FF', '#FFC8A2', '#D9B8FF'];
 export function avatar(person, size = 40) {
@@ -295,7 +294,7 @@ export function avatar(person, size = 40) {
   }, person?.avatar || [...name][0].toUpperCase());
   return el;
 }
- 
+
 // ---------- images: shrink a photo before upload ----------
 export function resizeImage(file, max = 1000, quality = 0.82) {
   return new Promise((resolve, reject) => {
@@ -314,10 +313,10 @@ export function resizeImage(file, max = 1000, quality = 0.82) {
     img.src = url;
   });
 }
- 
+
 export const blobToDataUrl = (blob) =>
   new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
- 
+
 // A readable title made from the words in a product link, for shops that block page reading.
 export function titleFromUrl(url) {
   try {
@@ -331,8 +330,19 @@ export function titleFromUrl(url) {
   } catch { /* not a valid link */ }
   return '';
 }
- 
+
+// Amazon links carry a long tracking tail. Keep just the product: https://www.amazon.it/dp/ASIN
+export function cleanProductUrl(url) {
+  try {
+    const u = new URL(String(url).trim());
+    if (/(^|\.)amazon\.[a-z.]{2,6}$/i.test(u.hostname)) {
+      const m = u.pathname.match(/\/(?:dp|gp\/product|gp\/aw\/d)\/([A-Z0-9]{10})(?:[/?]|$)/i);
+      if (m) return `${u.origin}/dp/${m[1].toUpperCase()}`;
+    }
+  } catch { /* not a valid link: leave it alone */ }
+  return String(url).trim();
+}
+
 export function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
 }
- 
