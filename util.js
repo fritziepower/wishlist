@@ -206,6 +206,8 @@ DICT.it = {
   "Experience": "Esperienza",
   "Other": "Altro",
   "Remove": "Rimuovi",
+  "Which store?": "Da quale negozio?",
+  "e.g. Amazon, Feltrinelli": "es. Amazon, Feltrinelli",
   "The link reader isn't switched on yet (step 4 of the setup guide). I made a title from the link instead.": "Il lettore di link non è ancora attivo (passo 4 della guida). Ho creato un titolo dalle parole del link.",
   "This shop doesn't let Wishlist read its page. I made a title from the link. Add a photo yourself.": "Questo negozio non permette a Wishlist di leggere la sua pagina. Ho creato un titolo dal link. Aggiungi tu una foto.",
   "Size": "Taglia",
