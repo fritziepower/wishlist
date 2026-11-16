@@ -1,13 +1,14 @@
-// Wishlist: screens, routing and glue. Data lives behind ./data.js.
-import { h, t, icon, TYPES, typeInfo, avatar, resizeImage, hostOf } from './util.js';
-import { createBackend } from './data.js';
 
+// Wishlist: screens, routing and glue. Data lives behind ./data.js.
+import { h, t, icon, TYPES, typeInfo, avatar, resizeImage, hostOf, titleFromUrl } from './util.js';
+import { createBackend } from './data.js';
+ 
 const root = document.getElementById('app');
 const S = { be: null, me: null, groups: [], reorder: false };
-
+ 
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isStandalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
-
+ 
 // ---------------------------------------------------------------------
 // small UI helpers
 // ---------------------------------------------------------------------
@@ -19,7 +20,7 @@ function toast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.remove(), 3200);
 }
-
+ 
 function openDialog(build) {
   return new Promise((resolve) => {
     const d = h('dialog');
@@ -36,7 +37,7 @@ const confirmDialog = ({ title, body, ok, danger }) => openDialog((close) => [
     h('button', { class: 'btn ghost', type: 'button', onClick: () => close(false) }, t('Cancel')),
     h('button', { class: 'btn' + (danger ? ' danger' : ''), type: 'button', onClick: () => close(true) }, ok)),
 ]).then(Boolean);
-
+ 
 const promptDialog = ({ title, label, value = '', ok, placeholder = '', maxlength = 60, help }) => openDialog((close) => {
   const input = h('input', { type: 'text', value, placeholder, maxlength, autocomplete: 'off', required: true });
   const form = h('form', { onSubmit: (e) => { e.preventDefault(); const v = input.value.trim(); if (v) close(v); } },
@@ -48,7 +49,7 @@ const promptDialog = ({ title, label, value = '', ok, placeholder = '', maxlengt
   setTimeout(() => input.focus(), 50);
   return form;
 });
-
+ 
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); }
   catch {
@@ -57,14 +58,14 @@ async function copyText(text) {
   }
   toast(t('Copied'));
 }
-
+ 
 // run an async click handler: disables the button while it works, shows errors as a toast
 const act = (fn) => async (e) => {
   const btn = e.currentTarget;
   btn.disabled = true;
   try { await fn(e); } catch (err) { toast(err.message || t('Something went wrong.')); } finally { btn.disabled = false; }
 };
-
+ 
 function Switch({ label, desc, checked, onToggle }) {
   const btn = h('button', { class: 'switch', type: 'button', role: 'switch', 'aria-checked': String(!!checked) },
     h('span', { class: 'txt' }, h('b', null, label), desc && h('span', { class: 'small' }, desc)), h('span', { class: 'track' }));
@@ -75,10 +76,10 @@ function Switch({ label, desc, checked, onToggle }) {
   });
   return btn;
 }
-
+ 
 const go = (hash) => { location.hash = hash; };
 const mount = (node) => root.replaceChildren(node);
-
+ 
 // ---------------------------------------------------------------------
 // shell (top bar + tabs)
 // ---------------------------------------------------------------------
@@ -94,11 +95,11 @@ function shell({ title, sub, back, actions, body, tab, fab }) {
     h('nav', { class: 'tabbar', 'aria-label': t('Main') },
       tabs.map(([id, href, ic, label]) => h('a', { href, 'aria-current': tab === id ? 'page' : null }, icon(ic), label))));
 }
-
+ 
 function Empty(emoji, title, text, action) {
   return h('div', { class: 'empty' }, h('span', { class: 'big-emoji', 'aria-hidden': 'true' }, emoji), h('h2', null, title), h('p', null, text), action);
 }
-
+ 
 // ---------------------------------------------------------------------
 // gift tag cards
 // ---------------------------------------------------------------------
@@ -113,7 +114,7 @@ function cardImage(item) {
   } else box.append(fallback());
   return box;
 }
-
+ 
 function cardHead(item, extraBadges) {
   const favicon = item.favicon_url && h('img', { src: item.favicon_url, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer', onError: (e) => e.target.remove() });
   const site = item.site_name || (item.url ? hostOf(item.url) : '');
@@ -126,7 +127,7 @@ function cardHead(item, extraBadges) {
       extraBadges),
   ];
 }
-
+ 
 function detailsBlock(item) {
   const rows = (item.details || []).filter((d) => d.label || d.value);
   if (!rows.length && !item.notes) return null;
@@ -143,7 +144,7 @@ function detailsBlock(item) {
   });
   return [btn, box];
 }
-
+ 
 // the owner's own card: edit, share status, reorder. Never any claim information.
 function ownerCard(item, i, all) {
   const names = item.groups.map((id) => S.groups.find((g) => g.id === id)?.name).filter(Boolean);
@@ -167,7 +168,7 @@ function ownerCard(item, i, all) {
             h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('Move down'), disabled: i === all.length - 1, onClick: act(move(1)) }, icon('down')))
           : h('a', { class: 'btn soft small', style: { marginLeft: 'auto' }, href: '#/item/' + item.id }, icon('edit', 16), t('Edit'))))));
 }
-
+ 
 // someone else's published item: buy link, "I'll buy this", crossed out when taken
 function viewerCard(item, owner) {
   const c = item.claim;
@@ -186,14 +187,14 @@ function viewerCard(item, owner) {
   if (taken) image.append(h('span', { class: 'sash' }, t('Taken')));
   return h('li', { class: 'tag-wrap' + (taken ? ' taken' : '') }, h('article', { class: 'tag' }, image, body));
 }
-
+ 
 // ---------------------------------------------------------------------
 // screens
 // ---------------------------------------------------------------------
 const iosTip = () => (isIOS && !isStandalone)
   ? h('div', { class: 'banner' }, t('On iPhone: tap the Share button, then "Add to Home Screen", and open Wishlist from there. The Home Screen app keeps its own data, so do this before you enter your name.'))
   : null;
-
+ 
 function viewWelcome() {
   const prefill = new URLSearchParams(location.search).get('join') || '';
   let mode = 'new';
@@ -243,7 +244,7 @@ function viewWelcome() {
   draw();
   return wrap;
 }
-
+ 
 function recoveryDialog(code) {
   return openDialog((close) => [
     h('h2', null, t('Save your recovery code')),
@@ -252,12 +253,12 @@ function recoveryDialog(code) {
     h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onClick: () => close(true) }, t("I've saved it"))),
   ]);
 }
-
+ 
 async function viewHome() {
   const items = await S.be.listMyItems();
   const body = h('div', { class: 'stack' });
   body.append(h('p', { class: 'small' }, t("Only people in your groups see what you share. You'll never see what has been bought.")));
-
+ 
   if (S.groups.length && items.length) {
     body.append(h('section', { class: 'panel' }, h('h2', null, t('Share your list')),
       S.groups.map((g) => {
@@ -282,9 +283,9 @@ async function viewHome() {
     fab: items.length ? h('a', { class: 'btn fab', href: '#/item/new' }, icon('plus', 20), t('Add wish')) : null,
   };
 }
-
+ 
 const QUICK_DETAILS = ['Size', 'Shoe size', 'Colour', 'Quantity', 'Model'];
-
+ 
 async function viewEditor(id) {
   const isNew = id === 'new';
   let f;
@@ -299,24 +300,33 @@ async function viewEditor(id) {
   const box = h('div', { class: 'stack' });
   const draw = () => box.replaceChildren(...build());
   const bind = (el, key) => { el.addEventListener('input', () => { f[key] = el.value; }); return el; };
-
+ 
   const fetchLink = async () => {
     const u = f.url.trim();
     if (!/^https?:\/\//i.test(u)) { status = { err: t('Paste a full link, starting with https://') }; draw(); return; }
     status = { busy: true }; draw();
-    try {
-      const r = await S.be.preview(u);
-      if (r && r.ok) {
-        if (!f.title.trim() && r.title) f.title = r.title;
-        if (!f.image_url && r.image) f.image_url = r.image;
-        if (r.favicon) f.favicon_url = r.favicon;
-        f.site_name = r.site_name || f.site_name || hostOf(u);
-        status = { ok: t('Filled in from the link. Check it and change anything you like.') };
-      } else { f.site_name = f.site_name || hostOf(u); status = { err: t("Couldn't read that page. You can fill in the details yourself.") }; }
-    } catch { status = { err: t("Couldn't read that page. You can fill in the details yourself.") }; }
+    let r = null;
+    try { r = await S.be.preview(u); } catch { r = { ok: false, reason: 'function' }; }
+    if (r && r.ok) {
+      if (!f.title.trim() && r.title) f.title = r.title;
+      if (!f.image_url && r.image) f.image_url = r.image;
+      if (r.favicon) f.favicon_url = r.favicon;
+      f.site_name = r.site_name || f.site_name || hostOf(u);
+      status = { ok: t('Filled in from the link. Check it and change anything you like.') };
+    } else {
+      // could not read the page: still fill in what the link itself tells us
+      const host = hostOf(u);
+      f.site_name = f.site_name || host;
+      if (!f.favicon_url && host) f.favicon_url = `https://www.google.com/s2/favicons?domain=${host}&sz=64`;
+      const guess = titleFromUrl(u);
+      if (!f.title.trim() && guess) f.title = guess;
+      status = { warn: r?.reason === 'function'
+        ? t("The link reader isn't switched on yet (step 4 of the setup guide). I made a title from the link instead.")
+        : t("This shop doesn't let Wishlist read its page. I made a title from the link. Add a photo yourself.") };
+    }
     draw();
   };
-
+ 
   const pickImage = async (file) => {
     if (!file) return;
     status = { busy: true }; draw();
@@ -324,7 +334,7 @@ async function viewEditor(id) {
     catch (e) { status = { err: e.message }; }
     draw();
   };
-
+ 
   const save = act(async () => {
     if (!f.title.trim()) { toast(t('Add a title first.')); return; }
     if (f.url.trim() && !/^https?:\/\//i.test(f.url.trim())) f.url = 'https://' + f.url.trim();
@@ -337,14 +347,14 @@ async function viewEditor(id) {
     if (!(await confirmDialog({ title: t('Delete this wish?'), body: t('It disappears from your list and from every group.'), ok: t('Delete'), danger: true }))) return;
     await S.be.deleteItem(id); toast(t('Wish deleted')); go('#/');
   });
-
+ 
   function build() {
     const info = typeInfo(f.type);
     const out = [];
     out.push(h('div', { role: 'radiogroup', 'aria-label': t('Type') }, h('span', { class: 'label' }, t('What kind of wish is it?')),
       h('div', { class: 'chips' }, TYPES.map((ty) => h('button', { class: 'chip', type: 'button', role: 'radio', 'aria-checked': String(f.type === ty.id),
         onClick: () => { f.type = ty.id; draw(); } }, ty.emoji, t(ty.label))))));
-
+ 
     const url = bind(h('input', { type: 'url', inputmode: 'url', value: f.url, placeholder: 'https://', autocapitalize: 'none', autocomplete: 'off' }), 'url');
     url.addEventListener('paste', () => setTimeout(() => { f.url = url.value; fetchLink(); }, 0));
     out.push(h('div', null,
@@ -352,10 +362,11 @@ async function viewEditor(id) {
       h('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', marginTop: '8px', flexWrap: 'wrap' } },
         h('button', { class: 'btn soft small', type: 'button', disabled: status?.busy, onClick: fetchLink }, icon('link', 16), status?.busy ? t('Reading the link…') : t('Fill in from link')),
         status?.ok && h('span', { class: 'small' }, status.ok)),
+      status?.warn && h('p', { class: 'hint' }, status.warn),
       status?.err && h('p', { class: 'error', role: 'alert' }, t(status.err))));
-
+ 
     out.push(h('label', { class: 'field' }, h('span', null, t('Title')), bind(h('input', { type: 'text', value: f.title, maxlength: 200, required: true, placeholder: t('What would you love?') }), 'title')));
-
+ 
     const fileInput = h('input', { type: 'file', accept: 'image/*', hidden: true, onChange: (e) => pickImage(e.target.files[0]) });
     out.push(h('div', null, h('span', { class: 'label' }, t('Picture')),
       h('div', { class: 'img-edit' },
@@ -366,14 +377,14 @@ async function viewEditor(id) {
           fileInput)),
       !f.image_url && h('div', { style: { marginTop: '10px' } }, h('label', { class: 'field' }, h('span', null, t('Or pick an emoji')),
         bind(h('input', { class: 'emoji-input', type: 'text', value: f.emoji, maxlength: 8, placeholder: info.emoji, 'aria-label': t('Emoji') }), 'emoji')))));
-
+ 
     out.push(h('div', { style: { display: 'grid', gap: '14px', gridTemplateColumns: '1fr 1fr' } },
       h('label', { class: 'field' }, h('span', null, f.type === 'product' ? t('Price') : t('Amount or budget')),
         bind(h('input', { type: 'text', value: f.price, maxlength: 60, placeholder: f.type === 'product' ? '29.90' : '20–40', inputmode: 'text' }), 'price')),
       h('div', null, h('span', { class: 'label' }, t('How much do you want it?')),
         h('div', { class: 'chips' }, [['nice', t('Nice to have')], ['really', t('Really want')]].map(([v, l]) =>
           h('button', { class: 'chip', type: 'button', 'aria-pressed': String(f.priority === v), onClick: () => { f.priority = v; draw(); } }, l))))));
-
+ 
     out.push(h('div', null, h('span', { class: 'label' }, t('Order details')), h('p', { class: 'hint', style: { marginTop: '-2px', marginBottom: '8px' } }, t('Size, colour or anything the buyer needs to get it right.')),
       f.details.map((d, i) => h('div', { class: 'detail-row' },
         bind2(h('input', { type: 'text', value: d.label, maxlength: 40, placeholder: t('Label'), 'aria-label': t('Label') }), d, 'label'),
@@ -382,15 +393,15 @@ async function viewEditor(id) {
       h('div', { class: 'chips' },
         QUICK_DETAILS.filter((q) => !f.details.some((d) => d.label === t(q))).map((q) => h('button', { class: 'chip', type: 'button', onClick: () => { f.details.push({ label: t(q), value: '' }); draw(); } }, icon('plus', 14), t(q))),
         h('button', { class: 'chip', type: 'button', onClick: () => { f.details.push({ label: '', value: '' }); draw(); } }, icon('plus', 14), t('Custom')))));
-
+ 
     out.push(h('label', { class: 'field' }, h('span', null, t('Notes')), bind(h('textarea', { maxlength: 2000, placeholder: t('Anything else the buyer should know') }, f.notes), 'notes')));
-
+ 
     out.push(h('section', { class: 'panel' }, h('h2', null, t('Who can see this?')),
       S.groups.length
         ? [h('p', { class: 'hint', style: { marginTop: 0 } }, t('Private unless you choose a group.')),
           S.groups.map((g) => Switch({ label: g.name, checked: f.groups.includes(g.id), onToggle: async (on) => { f.groups = on ? [...f.groups, g.id] : f.groups.filter((x) => x !== g.id); } }))]
         : h('p', { class: 'hint', style: { marginTop: 0 } }, t('Only you, for now. Create or join a group to share it.'))));
-
+ 
     out.push(h('div', { class: 'sticky-save' },
       h('a', { class: 'btn ghost', href: '#/' }, t('Cancel')),
       h('button', { class: 'btn', type: 'button', onClick: save }, isNew ? t('Add wish') : t('Save changes'))));
@@ -398,11 +409,11 @@ async function viewEditor(id) {
     return out;
   }
   const bind2 = (el, obj, key) => { el.addEventListener('input', () => { obj[key] = el.value; }); return el; };
-
+ 
   draw();
   return { title: isNew ? t('New wish') : t('Edit wish'), back: '#/', tab: 'home', body: box };
 }
-
+ 
 async function viewGroups() {
   const createGroup = async () => {
     const name = await promptDialog({ title: t('Create a group'), label: t('Group name'), placeholder: t('e.g. Family'), ok: t('Create group') });
@@ -429,13 +440,13 @@ async function viewGroups() {
       : Empty('👪', t('No groups yet'), t('Create a group for your family, then share the invite code. Or join one with a code.')));
   return { title: t('Groups'), tab: 'groups', body };
 }
-
+ 
 async function viewGroup(gid) {
   const g = S.groups.find((x) => x.id === gid);
   if (!g) throw new Error(t('You are not in that group.'));
   const counts = await S.be.groupCounts(gid);
   const link = S.be.demo ? null : `${location.origin}${location.pathname}?join=${g.invite_code}`;
-
+ 
   const members = h('ul', { class: 'rows' }, g.members.map((m) => {
     const isMe = m.id === S.me.id;
     const n = counts[m.id] || 0;
@@ -451,7 +462,7 @@ async function viewGroup(gid) {
           await S.be.removeMember(gid, m.id); toast(t('Removed')); refresh();
         }) }, icon('x', 18)));
   }));
-
+ 
   const invite = h('section', { class: 'panel' }, h('h2', null, t('Invite someone')),
     h('div', { class: 'code-box' }, h('code', null, g.invite_code),
       h('div', { style: { display: 'flex', gap: '8px' } },
@@ -462,7 +473,7 @@ async function viewGroup(gid) {
       if (!(await confirmDialog({ title: t('Make a new code?'), body: t('The old code stops working. People already in the group stay in.'), ok: t('Make new code') }))) return;
       await S.be.regenInvite(gid); toast(t('New code ready')); refresh();
     }) }, t('Make a new code')));
-
+ 
   const manage = h('section', { class: 'panel' }, h('h2', null, t('Group settings')),
     g.isCreator && Switch({ label: t('Show who is buying what'), desc: t('Members see the name of whoever claimed a gift. Turn off to show only that it is taken.'), checked: g.show_claimers,
       onToggle: async (on) => { await S.be.updateGroup(gid, { show_claimers: on }); } }),
@@ -475,11 +486,11 @@ async function viewGroup(gid) {
       if (!(await confirmDialog({ title: t('Leave {name}?', { name: g.name }), body: t('Your wishes will no longer be visible here. You can join again with the code.'), ok: t('Leave group'), danger: true }))) return;
       await S.be.leaveGroup(gid); toast(t('You left the group')); go('#/groups');
     }) }, t('Leave group')));
-
+ 
   return { title: g.name, sub: t('{n} members', { n: g.members.length }), back: '#/groups', tab: 'groups',
     body: h('div', { class: 'stack' }, h('section', { class: 'panel' }, h('h2', null, t('Wishlists')), members), invite, manage) };
 }
-
+ 
 async function viewMember(gid, uid) {
   if (uid === S.me.id) { go('#/'); return viewHome(); }
   const g = S.groups.find((x) => x.id === gid);
@@ -493,9 +504,9 @@ async function viewMember(gid, uid) {
       : Empty('🎁', t('Nothing shared yet'), t("{name} hasn't shared any wishes with this group.", { name: owner.name })));
   return { title: t("{name}'s wishlist", { name: owner.name }), sub: g.name, back: '#/group/' + gid, tab: 'groups', body };
 }
-
+ 
 const AVATARS = ['🙂', '😎', '🦊', '🐱', '🐶', '🐼', '🦄', '🌸', '⭐', '🎸', '📚', '🧶'];
-
+ 
 async function viewSettings() {
   const name = h('input', { type: 'text', value: S.me.name, maxlength: 40, autocomplete: 'given-name' });
   const codeBox = h('div', { hidden: true });
@@ -509,7 +520,7 @@ async function viewSettings() {
     const fresh = avatar(S.me, 56); bigAvatar.replaceWith(fresh); bigAvatar = fresh;
   };
   drawAvatars();
-
+ 
   const body = h('div', { class: 'stack' },
     h('section', { class: 'panel stack' }, h('h2', null, t('Your profile')),
       h('div', { style: { display: 'flex', alignItems: 'center', gap: '14px' } }, bigAvatar,
@@ -539,14 +550,14 @@ async function viewSettings() {
       }) }, icon('trash', 18), t('Delete my data'))));
   return { title: t('Settings'), tab: 'settings', body };
 }
-
+ 
 // ---------------------------------------------------------------------
 // router
 // ---------------------------------------------------------------------
 let routeToken = 0;
 let lastKey = '';
 const refresh = () => route({ quiet: true });
-
+ 
 async function route(opts = {}) {
   const tok = ++routeToken;
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
@@ -576,7 +587,7 @@ async function route(opts = {}) {
   }
 }
 addEventListener('hashchange', () => { S.reorder = false; route(); });
-
+ 
 // ---------------------------------------------------------------------
 // start
 // ---------------------------------------------------------------------
@@ -600,7 +611,8 @@ async function boot() {
   }
 }
 boot();
-
+ 
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
+ 
