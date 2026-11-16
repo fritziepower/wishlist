@@ -3,7 +3,9 @@ import { h, t, icon, TYPES, typeInfo, avatar, resizeImage, hostOf, titleFromUrl,
 import { createBackend } from './data.js';
 
 const root = document.getElementById('app');
-const S = { be: null, me: null, groups: [], reorder: false };
+const PHOTO_TYPES = ['product', 'experience'];   // the types that can show a photo (the others show their emoji)
+let stopReorder = () => {};
+const S = { be: null, me: null, groups: [], groupTab: 'people', groupFilter: 'available' };
 
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isStandalone = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
@@ -104,10 +106,10 @@ function Empty(emoji, title, text, action) {
 // ---------------------------------------------------------------------
 function cardImage(item) {
   const info = typeInfo(item.type);
-  const isProduct = item.type === 'product';
-  const fallback = () => h('span', { class: 'big-emoji', 'aria-hidden': 'true' }, (isProduct && item.emoji) || info.emoji);
+  const showsPhoto = PHOTO_TYPES.includes(item.type);
+  const fallback = () => h('span', { class: 'big-emoji', 'aria-hidden': 'true' }, info.emoji);
   const box = h('div', { class: 't-' + item.type + ' tag-img' }, h('span', { class: 'eyelet' }));
-  if (isProduct && item.image_url) {
+  if (showsPhoto && item.image_url) {
     const img = h('img', { src: item.image_url, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' });
     img.addEventListener('error', () => { img.replaceWith(fallback()); });
     box.append(img);
@@ -146,27 +148,123 @@ function detailsBlock(item) {
 }
 
 // the owner's own card: edit, share status, reorder. Never any claim information.
-function ownerCard(item, i, all) {
+function ownerCard(item) {
   const names = item.groups.map((id) => S.groups.find((g) => g.id === id)?.name).filter(Boolean);
   const badge = names.length
     ? h('span', { class: 'badge shared' }, icon('users', 14), t('Shared with {names}', { names: names.join(', ') }))
     : h('span', { class: 'badge private' }, icon('lock', 14), t('Private'));
-  const move = (dir) => async () => {
-    const ids = all.map((x) => x.id);
-    [ids[i], ids[i + dir]] = [ids[i + dir], ids[i]];
-    await S.be.reorder(ids);
-    refresh();
-  };
-  return h('li', { class: 'tag-wrap' }, h('article', { class: 'tag' },
+  return h('li', { class: 'tag-wrap', 'data-id': item.id }, h('article', { class: 'tag' },
     cardImage(item),
     h('div', { class: 'tag-body' }, cardHead(item, badge), detailsBlock(item),
       h('div', { class: 'tag-actions' },
         item.url && h('a', { class: 'btn ghost small', href: item.url, target: '_blank', rel: 'noopener noreferrer' }, icon('external', 16), t('Open link')),
-        S.reorder
-          ? h('div', { class: 'reorder-btns' },
-            h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('Move up'), disabled: i === 0, onClick: act(move(-1)) }, icon('up')),
-            h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('Move down'), disabled: i === all.length - 1, onClick: act(move(1)) }, icon('down')))
-          : h('a', { class: 'btn soft small', style: { marginLeft: 'auto' }, href: '#/item/' + item.id }, icon('edit', 16), t('Edit'))))));
+        h('a', { class: 'btn soft small', style: { marginLeft: 'auto' }, href: '#/item/' + item.id }, icon('edit', 16), t('Edit'))))));
+}
+
+// Press and hold a card for a moment, then drag it up or down. Works with a finger or a mouse.
+// A quick tap or a normal scroll is left alone. Returns a function that removes the global listeners.
+function enableReorder(list, onDone) {
+  const HOLD_MS = 350, TOLERANCE = 10;
+  const ac = new AbortController();
+  let timer = null, press = null, drag = null, raf = 0;
+
+  const cancel = () => { clearTimeout(timer); timer = null; press = null; };
+  const begin = (el, x, y) => { cancel(); press = { el, x, y }; timer = setTimeout(() => pickUp(el, x, y), HOLD_MS); };
+
+  function pickUp(el, x, y) {
+    const all = [...list.children];
+    const slots = all.map((c) => { const r = c.getBoundingClientRect(); return { left: r.left + scrollX, top: r.top + scrollY, w: r.width, h: r.height }; });
+    const from = all.indexOf(el);
+    drag = { el, all, slots, from, to: from, startX: x + scrollX, startY: y + scrollY, x, y };
+    press = null;
+    list.classList.add('is-dragging');
+    el.classList.add('lifted');
+    all.forEach((c) => { if (c !== el) c.classList.add('shifting'); });
+    navigator.vibrate?.(15);
+    tick();
+  }
+
+  // the picked-up card follows the finger; the others slide into the places they would have
+  function place() {
+    const d = drag;
+    const dx = d.x + scrollX - d.startX, dy = d.y + scrollY - d.startY;
+    d.el.style.transform = `translate(${dx}px, ${dy}px) scale(1.03)`;
+    const s0 = d.slots[d.from];
+    const cx = s0.left + s0.w / 2 + dx, cy = s0.top + s0.h / 2 + dy;
+    let best = d.from, bestDist = Infinity;
+    d.slots.forEach((s, k) => {
+      const dist = (s.left + s.w / 2 - cx) ** 2 + (s.top + s.h / 2 - cy) ** 2;
+      if (dist < bestDist) { bestDist = dist; best = k; }
+    });
+    d.to = best;
+    const order = d.all.map((_, k) => k).filter((k) => k !== d.from);
+    order.splice(d.to, 0, d.from);                                  // order[slot] = which card sits there
+    order.forEach((cardIdx, slot) => {
+      if (cardIdx === d.from) return;
+      const a0 = d.slots[cardIdx], b0 = d.slots[slot];
+      d.all[cardIdx].style.transform = `translate(${b0.left - a0.left}px, ${b0.top - a0.top}px)`;
+    });
+  }
+  function tick() {
+    if (!drag) return;
+    const top = 90, bottom = innerHeight - 150;                     // scroll the page when the finger nears an edge
+    if (drag.y < top) scrollBy(0, -16 * Math.min(1, (top - drag.y) / top));
+    else if (drag.y > bottom) scrollBy(0, 16 * Math.min(1, (drag.y - bottom) / 150));
+    place();
+    raf = requestAnimationFrame(tick);
+  }
+  function drop() {
+    const d = drag;
+    cancelAnimationFrame(raf);
+    drag = null;
+    const s0 = d.slots[d.from], s1 = d.slots[d.to];
+    d.el.classList.remove('lifted');
+    d.el.classList.add('settling');
+    d.el.style.transform = `translate(${s1.left - s0.left}px, ${s1.top - s0.top}px)`;
+    setTimeout(() => {
+      const nodes = [...d.all];
+      const [moved] = nodes.splice(d.from, 1);
+      nodes.splice(d.to, 0, moved);
+      d.all.forEach((c) => { c.style.transform = ''; c.classList.remove('shifting', 'settling'); });
+      list.append(...nodes);
+      list.classList.remove('is-dragging');
+      if (d.from !== d.to) onDone(nodes.map((c) => c.dataset.id));
+    }, 190);
+  }
+
+  // finger
+  list.addEventListener('touchstart', (e) => {
+    const el = e.target.closest('.tag-wrap');
+    if (e.touches.length !== 1 || !el) return cancel();
+    begin(el, e.touches[0].clientX, e.touches[0].clientY);
+  }, { passive: true });
+  list.addEventListener('touchmove', (e) => {
+    const p = e.touches[0];
+    if (drag) { e.preventDefault(); drag.x = p.clientX; drag.y = p.clientY; }
+    else if (press && Math.hypot(p.clientX - press.x, p.clientY - press.y) > TOLERANCE) cancel();   // it is a scroll
+  }, { passive: false });
+  const touchEnd = (e) => { if (drag) { e.preventDefault(); drop(); } cancel(); };
+  list.addEventListener('touchend', touchEnd);
+  list.addEventListener('touchcancel', touchEnd);
+  // mouse
+  list.addEventListener('mousedown', (e) => {
+    const el = e.target.closest('.tag-wrap');
+    if (e.button === 0 && el) begin(el, e.clientX, e.clientY);
+  });
+  addEventListener('mousemove', (e) => {
+    if (drag) { drag.x = e.clientX; drag.y = e.clientY; }
+    else if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) > TOLERANCE) cancel();
+  }, { signal: ac.signal });
+  addEventListener('mouseup', () => {
+    if (drag) {
+      addEventListener('click', (ev) => { ev.stopPropagation(); ev.preventDefault(); }, { capture: true, once: true });   // no click after a drag
+      drop();
+    }
+    cancel();
+  }, { signal: ac.signal });
+  list.addEventListener('dragstart', (e) => e.preventDefault());
+  list.addEventListener('contextmenu', (e) => { if (drag || press) e.preventDefault(); });
+  return () => { ac.abort(); cancelAnimationFrame(raf); clearTimeout(timer); };
 }
 
 // someone else's published item: buy link, "I'll buy this", crossed out when taken
@@ -257,7 +355,8 @@ function recoveryDialog(code) {
 async function viewHome() {
   const items = await S.be.listMyItems();
   const body = h('div', { class: 'stack' });
-  body.append(h('p', { class: 'small' }, t("Only people in your groups see what you share. You'll never see what has been bought.")));
+  body.append(h('p', { class: 'small' }, t("Only people in your groups see what you share. You'll never see what has been bought."),
+    items.length > 1 && [h('br'), t('Press and hold a wish, then drag it to reorder.')]));
 
   if (S.groups.length && items.length) {
     body.append(h('section', { class: 'panel' }, h('h2', null, t('Share your list')),
@@ -274,12 +373,13 @@ async function viewHome() {
     body.append(Empty('🎁', t('Nothing here yet'), t("Add something you'd love to get. It stays private until you share it."),
       h('a', { class: 'btn', href: '#/item/new' }, icon('plus', 18), t('Add your first wish'))));
   } else {
-    body.append(h('ul', { class: 'tags' }, items.map((it, i) => ownerCard(it, i, items))));
+    const list = h('ul', { class: 'tags reorderable' }, items.map(ownerCard));
+    stopReorder();
+    stopReorder = enableReorder(list, (ids) => S.be.reorder(ids).catch((e) => { toast(e.message); refresh(); }));
+    body.append(list);
   }
   return {
     title: t('My wishlist'), sub: items.length ? t('{n} wishes', { n: items.length }) : null, tab: 'home', body,
-    actions: items.length > 1 ? h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('Reorder wishes'), 'aria-pressed': String(S.reorder), style: S.reorder ? { background: 'var(--line)' } : null,
-      onClick: () => { S.reorder = !S.reorder; refresh(); } }, icon('sort')) : null,
     fab: items.length ? h('a', { class: 'btn fab', href: '#/item/new' }, icon('plus', 20), t('Add wish')) : null,
   };
 }
@@ -311,10 +411,8 @@ async function viewEditor(id) {
     try { r = await S.be.preview(clean); } catch { r = { ok: false, reason: 'function' }; }
     if (r && r.ok) {
       if (!f.title.trim() && r.title) f.title = r.title;
-      if (f.type === 'product') {
-        if (!f.image_url && r.image) f.image_url = r.image;
-        if (!f.price.trim() && r.price) f.price = (!r.currency || r.currency === 'EUR') ? r.price : `${r.currency} ${r.price}`;
-      }
+      if (PHOTO_TYPES.includes(f.type) && !f.image_url && r.image) f.image_url = r.image;
+      if (f.type === 'product' && !f.price.trim() && r.price) f.price = (!r.currency || r.currency === 'EUR') ? r.price : `${r.currency} ${r.price}`;
       if (r.favicon) f.favicon_url = r.favicon;
       f.site_name = f.type === 'product' ? (r.site_name || f.site_name || hostOf(u)) : (f.site_name || r.site_name || hostOf(u));
       status = { ok: t('Filled in from the link. Check it and change anything you like.') };
@@ -345,7 +443,9 @@ async function viewEditor(id) {
     if (f.url.trim() && !/^https?:\/\//i.test(f.url.trim())) f.url = 'https://' + f.url.trim();
     f.url = cleanProductUrl(f.url);
     const item = { ...f, id: isNew ? undefined : id };
-    if (item.type !== 'product') { item.image_url = ''; item.emoji = ''; item.details = []; }   // these types use their own emoji
+    item.emoji = '';                                                                            // no custom emoji any more
+    if (!PHOTO_TYPES.includes(item.type)) item.image_url = '';
+    if (item.type !== 'product') item.details = [];   // these types use their own emoji
     if (item.type === 'money') { item.url = ''; item.favicon_url = ''; item.site_name = ''; }   // no link for money
     const saved = await S.be.saveItem(item);
     await S.be.setItemGroups(saved.id, f.groups);
@@ -360,6 +460,7 @@ async function viewEditor(id) {
   function build() {
     const info = typeInfo(f.type);
     const isProduct = f.type === 'product';
+    const hasPhoto = PHOTO_TYPES.includes(f.type);
     const out = [];
     out.push(h('div', { role: 'radiogroup', 'aria-label': t('Type') }, h('span', { class: 'label' }, t('What kind of wish is it?')),
       h('div', { class: 'chips' }, TYPES.map((ty) => h('button', { class: 'chip', type: 'button', role: 'radio', 'aria-checked': String(f.type === ty.id),
@@ -380,15 +481,13 @@ async function viewEditor(id) {
       bind(h('input', { type: 'text', value: f.site_name, maxlength: 100, placeholder: t('e.g. Amazon, Feltrinelli') }), 'site_name')));
 
     const fileInput = h('input', { type: 'file', accept: 'image/*', hidden: true, onChange: (e) => pickImage(e.target.files[0]) });
-    if (isProduct) out.push(h('div', null, h('span', { class: 'label' }, t('Picture')),
+    if (hasPhoto) out.push(h('div', null, h('span', { class: 'label' }, t('Picture')),
       h('div', { class: 'img-edit' },
-        h('div', { class: 'thumb' }, f.image_url ? h('img', { src: f.image_url, alt: '', referrerpolicy: 'no-referrer' }) : (f.emoji || info.emoji)),
+        h('div', { class: 'thumb' }, f.image_url ? h('img', { src: f.image_url, alt: '', referrerpolicy: 'no-referrer' }) : info.emoji),
         h('div', { class: 'btns' },
           h('button', { class: 'btn ghost small', type: 'button', onClick: () => fileInput.click() }, icon('camera', 16), f.image_url ? t('Replace') : t('Upload photo')),
           f.image_url && h('button', { class: 'btn ghost small', type: 'button', onClick: () => { f.image_url = ''; draw(); } }, t('Remove')),
-          fileInput)),
-      !f.image_url && h('div', { style: { marginTop: '10px' } }, h('label', { class: 'field' }, h('span', null, t('Or pick an emoji')),
-        bind(h('input', { class: 'emoji-input', type: 'text', value: f.emoji, maxlength: 8, placeholder: info.emoji, 'aria-label': t('Emoji') }), 'emoji')))));
+          fileInput))));
 
     out.push(h('div', { style: { display: 'grid', gap: '14px', gridTemplateColumns: '1fr 1fr' } },
       h('label', { class: 'field' }, h('span', null, f.type === 'product' ? t('Price') : t('Amount or budget')),
@@ -453,54 +552,160 @@ async function viewGroups() {
   return { title: t('Groups'), tab: 'groups', body };
 }
 
+// small pop-up menu under a button (closes on outside tap, Escape, or choosing an entry)
+function openMenu(anchor, entries) {
+  document.querySelector('.menu')?.remove();
+  const r = anchor.getBoundingClientRect();
+  const menu = h('div', { class: 'menu', role: 'menu', style: { top: r.bottom + 6 + 'px', right: Math.max(8, innerWidth - r.right) + 'px' } });
+  const close = () => { menu.remove(); removeEventListener('pointerdown', outside, true); removeEventListener('keydown', esc, true); };
+  const outside = (e) => { if (!menu.contains(e.target)) close(); };
+  const esc = (e) => { if (e.key === 'Escape') close(); };
+  entries.forEach((en) => menu.append(h('button', { class: 'menu-item', type: 'button', role: 'menuitem', onClick: () => { close(); en.run(); } }, icon(en.icon, 20), en.label)));
+  document.body.append(menu);
+  setTimeout(() => { addEventListener('pointerdown', outside, true); addEventListener('keydown', esc, true); }, 0);
+  menu.querySelector('button')?.focus();
+}
+
+function inviteDialog(g) {
+  return openDialog((close) => {
+    const codeEl = h('code', null, g.invite_code);
+    const link = () => `${location.origin}${location.pathname}?join=${g.invite_code}`;
+    return [
+      h('h2', null, t('Invite someone')),
+      h('div', { class: 'code-box' }, codeEl,
+        h('div', { style: { display: 'flex', gap: '8px' } },
+          h('button', { class: 'btn ghost small', type: 'button', onClick: () => copyText(g.invite_code) }, icon('copy', 16), t('Copy')),
+          navigator.share && h('button', { class: 'btn small', type: 'button', onClick: () => navigator.share({ title: 'Wishlist', text: t('Join "{name}" on Wishlist with this code: {code}', { name: g.name, code: g.invite_code }), url: S.be.demo ? undefined : link() }).catch(() => {}) }, icon('share', 16), t('Share')))),
+      h('p', { class: 'hint' }, isIOS ? t('Tell them to add Wishlist to their Home Screen first, then enter the code.') : t('They enter the code when they join, or in Groups → Join with code.')),
+      g.isCreator && h('button', { class: 'link-btn', type: 'button', onClick: act(async () => {
+        if (!(await confirmDialog({ title: t('Make a new code?'), body: t('The old code stops working. People already in the group stay in.'), ok: t('Make new code') }))) return;
+        g.invite_code = await S.be.regenInvite(g.id); codeEl.textContent = g.invite_code; toast(t('New code ready'));
+      }) }, t('Make a new code')),
+      h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onClick: () => close(true) }, t('Done'))),
+    ];
+  });
+}
+
+function settingsDialog(g) {
+  return openDialog((close) => {
+    const others = g.members.filter((m) => m.id !== S.me.id);
+    return [
+      h('h2', null, t('Group settings')),
+      g.isCreator && Switch({ label: t('Show who is buying what'), desc: t('Members see the name of whoever claimed a gift. Turn off to show only that it is taken.'), checked: g.show_claimers,
+        onToggle: async (on) => { await S.be.updateGroup(g.id, { show_claimers: on }); g.show_claimers = on; } }),
+      g.isCreator && h('button', { class: 'link-btn', type: 'button', onClick: act(async () => {
+        const name = await promptDialog({ title: t('Rename group'), label: t('Group name'), value: g.name, ok: t('Save') });
+        if (name) { await S.be.updateGroup(g.id, { name }); g.name = name; close(true); }
+      }) }, t('Rename group')),
+      g.isCreator && others.length > 0 && h('div', { style: { marginTop: '14px' } }, h('span', { class: 'label' }, t('Members')),
+        h('ul', { class: 'rows' }, others.map((m) => h('li', { style: { display: 'flex', alignItems: 'center' } },
+          h('span', { class: 'row' }, avatar(m, 36), h('span', { class: 'grow' }, h('b', null, m.name))),
+          h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('Remove {name}', { name: m.name }), onClick: act(async () => {
+            if (!(await confirmDialog({ title: t('Remove {name}?', { name: m.name }), body: t('They will no longer see this group or the lists shared in it.'), ok: t('Remove'), danger: true }))) return;
+            await S.be.removeMember(g.id, m.id); toast(t('Removed')); close(true);
+          }) }, icon('x', 18)))))),
+      h('div', { class: 'divider' }),
+      h('button', { class: 'btn danger block', type: 'button', onClick: act(async () => {
+        if (!(await confirmDialog({ title: t('Leave {name}?', { name: g.name }), body: t('Your wishes will no longer be visible here. You can join again with the code.'), ok: t('Leave group'), danger: true }))) return;
+        await S.be.leaveGroup(g.id); toast(t('You left the group')); close('left'); go('#/groups');
+      }) }, t('Leave group')),
+      h('div', { class: 'actions' }, h('button', { class: 'btn', type: 'button', onClick: () => close(true) }, t('Done'))),
+    ];
+  });
+}
+
+const moneyText = (p) => (/^[\d.,]+$/.test(p) ? '€' + p : p);
+
+// small square picture of a gift: its photo, or the emoji of its type. Dimmed with a tick when someone is buying it.
+function miniTile(item, size = 52) {
+  const c = item.claim;
+  const tile = h('span', { class: `mini t-${item.type}` + (c?.claimed ? ' taken' : '') + (c?.mine ? ' mine' : ''), title: item.title, style: { width: size + 'px', height: size + 'px' } });
+  const emoji = () => h('span', { 'aria-hidden': 'true' }, typeInfo(item.type).emoji);
+  if (PHOTO_TYPES.includes(item.type) && item.image_url) {
+    const img = h('img', { src: item.image_url, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' });
+    img.addEventListener('error', () => img.replaceWith(emoji()));
+    tile.append(img);
+  } else tile.append(emoji());
+  if (c?.claimed) tile.append(h('span', { class: 'tick' }, icon('check', 12)));
+  return tile;
+}
+
 async function viewGroup(gid) {
   const g = S.groups.find((x) => x.id === gid);
   if (!g) throw new Error(t('You are not in that group.'));
-  const counts = await S.be.groupCounts(gid);
-  const link = S.be.demo ? null : `${location.origin}${location.pathname}?join=${g.invite_code}`;
+  const all = await S.be.groupItems(gid);
+  const others = all.filter((i) => i.owner_id !== S.me.id);
+  const takenCount = others.filter((i) => i.claim?.claimed).length;
+  const mineCount = others.filter((i) => i.claim?.mine).length;
+  const availableCount = others.length - takenCount;
 
-  const members = h('ul', { class: 'rows' }, g.members.map((m) => {
+  // ----- overview numbers -----
+  const summary = g.members.length < 2
+    ? Empty('👪', t('Just you so far'), t('Invite your family to see their wishes here.'),
+      h('button', { class: 'btn', type: 'button', onClick: () => inviteDialog(g) }, icon('share', 18), t('Invite someone')))
+    : h('section', { class: 'stack', style: { gap: '10px' } },
+      h('div', { class: 'stats' },
+        h('div', { class: 'stat' }, h('b', null, others.length), h('span', null, t('Gifts shared'))),
+        h('div', { class: 'stat' }, h('b', null, takenCount), h('span', null, t('Gifts taken'))),
+        h('div', { class: 'stat' }, h('b', null, availableCount), h('span', null, t('Still available')))),
+      others.length > 0 && h('div', { class: 'bar', role: 'img', 'aria-label': `${takenCount}/${others.length}` }, h('span', { style: { width: Math.round((takenCount / others.length) * 100) + '%' } })),
+      mineCount > 0 && h('p', { class: 'small' }, t("You're buying {n}", { n: mineCount })));
+
+  // ----- people -----
+  const memberCard = (m) => {
     const isMe = m.id === S.me.id;
-    const n = counts[m.id] || 0;
-    return h('li', { style: { display: 'flex', alignItems: 'center' } },
-      h('a', { class: 'row', href: isMe ? '#/' : `#/group/${gid}/${m.id}` },
+    const list = all.filter((i) => i.owner_id === m.id);
+    const open = list.filter((i) => !i.claim?.claimed).length;
+    const href = isMe ? '#/' : `#/group/${gid}/${m.id}`;
+    const status = !list.length ? t('Nothing shared yet') : isMe ? t('{n} wishes shared', { n: list.length }) : open === 0 ? t('All taken') : t('{n} still available', { n: open });
+    return h('div', { class: 'member-card' },
+      h('a', { class: 'member-head', href },
         avatar(m, 44),
-        h('span', { class: 'grow' }, h('b', null, isMe ? t('{name} (you)', { name: m.name }) : m.name),
-          h('span', { class: 'small' }, n ? t('{n} wishes shared', { n }) : t('Nothing shared yet'))),
+        h('span', { class: 'grow' }, h('b', null, isMe ? t('{name} (you)', { name: m.name }) : m.name), h('span', { class: 'small' }, status)),
         h('span', { class: 'chev' }, icon('down', 18))),
-      g.isCreator && !isMe && h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('Remove {name}', { name: m.name }),
-        onClick: act(async () => {
-          if (!(await confirmDialog({ title: t('Remove {name}?', { name: m.name }), body: t('They will no longer see this group or the lists shared in it.'), ok: t('Remove'), danger: true }))) return;
-          await S.be.removeMember(gid, m.id); toast(t('Removed')); refresh();
-        }) }, icon('x', 18)));
-  }));
+      list.length > 0 && h('a', { class: 'minis', href, tabindex: '-1', 'aria-hidden': 'true' },
+        list.slice(0, 6).map((i) => miniTile(i)), list.length > 6 && h('span', { class: 'mini more' }, '+' + (list.length - 6))));
+  };
+  const people = () => h('div', { class: 'stack' },
+    [...g.members].sort((a, b) => (b.id === S.me.id) - (a.id === S.me.id)).map(memberCard));
 
-  const invite = h('section', { class: 'panel' }, h('h2', null, t('Invite someone')),
-    h('div', { class: 'code-box' }, h('code', null, g.invite_code),
-      h('div', { style: { display: 'flex', gap: '8px' } },
-        h('button', { class: 'btn ghost small', type: 'button', onClick: () => copyText(g.invite_code) }, icon('copy', 16), t('Copy')),
-        navigator.share && h('button', { class: 'btn small', type: 'button', onClick: () => navigator.share({ title: 'Wishlist', text: t('Join "{name}" on Wishlist with this code: {code}', { name: g.name, code: g.invite_code }), url: link || undefined }).catch(() => {}) }, icon('share', 16), t('Share')))),
-    h('p', { class: 'hint' }, isIOS ? t('Tell them to add Wishlist to their Home Screen first, then enter the code.') : t('They enter the code when they join, or in Groups → Join with code.')),
-    g.isCreator && h('button', { class: 'link-btn', type: 'button', onClick: act(async () => {
-      if (!(await confirmDialog({ title: t('Make a new code?'), body: t('The old code stops working. People already in the group stay in.'), ok: t('Make new code') }))) return;
-      await S.be.regenInvite(gid); toast(t('New code ready')); refresh();
-    }) }, t('Make a new code')));
+  // ----- gifts -----
+  const FILTERS = [['available', t('Still available')], ['mine', t("I'm buying")], ['all', t('Everything')]];
+  const gifts = () => {
+    const shown = others.filter((i) => S.groupFilter === 'available' ? !i.claim.claimed : S.groupFilter === 'mine' ? i.claim.mine : true);
+    return h('div', { class: 'stack' },
+      h('div', { class: 'chips' }, FILTERS.map(([id, label]) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(S.groupFilter === id), onClick: () => { S.groupFilter = id; draw(); } }, label))),
+      shown.length
+        ? h('section', { class: 'panel' }, h('ul', { class: 'rows' }, shown.map((i) => {
+          const owner = g.members.find((m) => m.id === i.owner_id);
+          const c = i.claim;
+          return h('li', null, h('a', { class: 'row', href: `#/group/${gid}/${i.owner_id}` },
+            miniTile(i),
+            h('span', { class: 'grow' }, h('b', null, i.title),
+              h('span', { class: 'small' }, [t('for {name}', { name: owner?.name || '' }), i.price && moneyText(i.price)].filter(Boolean).join(' · '))),
+            c.mine ? h('span', { class: 'badge shared' }, icon('check', 14), t("You're buying this"))
+              : c.claimed ? h('span', { class: 'badge' }, t('Taken'))
+                : i.priority === 'really' && h('span', { class: 'badge really' }, icon('star', 14), t('Really want'))));
+        })))
+        : Empty('🎁', t('Nothing to show'), others.length ? t('Try another filter.') : t('When others share their wishes, they appear here.')));
+  };
 
-  const manage = h('section', { class: 'panel' }, h('h2', null, t('Group settings')),
-    g.isCreator && Switch({ label: t('Show who is buying what'), desc: t('Members see the name of whoever claimed a gift. Turn off to show only that it is taken.'), checked: g.show_claimers,
-      onToggle: async (on) => { await S.be.updateGroup(gid, { show_claimers: on }); } }),
-    g.isCreator && h('button', { class: 'link-btn', type: 'button', onClick: act(async () => {
-      const name = await promptDialog({ title: t('Rename group'), label: t('Group name'), value: g.name, ok: t('Save') });
-      if (name) { await S.be.updateGroup(gid, { name }); refresh(); }
-    }) }, t('Rename group')),
-    g.isCreator && h('div', { class: 'divider' }),
-    h('button', { class: 'btn danger block', type: 'button', onClick: act(async () => {
-      if (!(await confirmDialog({ title: t('Leave {name}?', { name: g.name }), body: t('Your wishes will no longer be visible here. You can join again with the code.'), ok: t('Leave group'), danger: true }))) return;
-      await S.be.leaveGroup(gid); toast(t('You left the group')); go('#/groups');
-    }) }, t('Leave group')));
+  const body = h('div', { class: 'stack' });
+  const draw = () => {
+    const seg = h('div', { class: 'seg', role: 'tablist' }, [['people', t('People')], ['gifts', t('Gifts')]].map(([id, label]) =>
+      h('button', { type: 'button', role: 'tab', 'aria-selected': String(S.groupTab === id), onClick: () => { S.groupTab = id; draw(); } }, label)));
+    body.replaceChildren(...[summary, g.members.length > 1 && seg, S.groupTab === 'gifts' && g.members.length > 1 ? gifts() : people()].filter(Boolean));
+  };
+  draw();
 
-  return { title: g.name, sub: t('{n} members', { n: g.members.length }), back: '#/groups', tab: 'groups',
-    body: h('div', { class: 'stack' }, h('section', { class: 'panel' }, h('h2', null, t('Wishlists')), members), invite, manage) };
+  return {
+    title: g.name, sub: t('{n} members', { n: g.members.length }), back: '#/groups', tab: 'groups', body,
+    actions: h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('Group menu'), 'aria-haspopup': 'menu',
+      onClick: (e) => openMenu(e.currentTarget, [
+        { icon: 'share', label: t('Invite someone'), run: () => inviteDialog(g).then(() => refresh()) },
+        { icon: 'gear', label: t('Group settings'), run: () => settingsDialog(g).then((r) => { if (r !== 'left') refresh(); }) },
+      ]) }, icon('gear')),
+  };
 }
 
 async function viewMember(gid, uid) {
@@ -572,6 +777,7 @@ const refresh = () => route({ quiet: true });
 
 async function route(opts = {}) {
   const tok = ++routeToken;
+  stopReorder(); stopReorder = () => {};          // drop the drag listeners of the page we are leaving
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
   const key = parts.join('/');
   if (!S.me) { mount(viewWelcome()); return; }
@@ -598,7 +804,7 @@ async function route(opts = {}) {
     mount(shell({ title: t('Something went wrong'), tab, body: Empty('😕', t("That didn't work"), t(e.message || ''), h('button', { class: 'btn', type: 'button', onClick: () => route() }, t('Try again'))) }));
   }
 }
-addEventListener('hashchange', () => { S.reorder = false; route(); });
+addEventListener('hashchange', () => route());
 
 // ---------------------------------------------------------------------
 // start
